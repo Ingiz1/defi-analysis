@@ -53,8 +53,7 @@ const YF_INTERVALS = {
 
 async function fetchCandlesStock(symbol, interval) {
   const { yf, range } = YF_INTERVALS[interval]
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol.toUpperCase()}?interval=${yf}&range=${range}&includePrePost=false`
-  const res = await fetch(`https://corsproxy.io/?${encodeURIComponent(url)}`)
+  const res = await fetch(`/api/stock?symbol=${symbol.toUpperCase()}&interval=${yf}&range=${range}`)
   const data = await res.json()
   const result = data.chart?.result?.[0]
   if (!result) throw new Error('Sin datos para ' + symbol)
