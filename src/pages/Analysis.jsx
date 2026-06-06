@@ -248,22 +248,23 @@ function drawVP(canvas, priceRef, candleSeries, profile) {
   canvas.height = rect.height
   const ctx = canvas.getContext('2d')
   ctx.clearRect(0, 0, canvas.width, canvas.height)
-  const maxBarW = rect.width * 0.12
+  const maxBarW = rect.width * 0.14
   const { buckets, bucketSize, minPrice, maxVol, pocPrice, vahPrice, valPrice } = profile
   for (let i = 0; i < buckets.length; i++) {
-    const price  = minPrice + (i + 0.5) * bucketSize
-    const priceT = minPrice + (i + 1)   * bucketSize
-    const y1 = candleSeries.priceToCoordinate(price)
-    const y2 = candleSeries.priceToCoordinate(priceT)
+    const priceTop = minPrice + (i + 1) * bucketSize
+    const priceBot = minPrice + i       * bucketSize
+    const priceMid = minPrice + (i + 0.5) * bucketSize
+    const y1 = candleSeries.priceToCoordinate(priceTop)
+    const y2 = candleSeries.priceToCoordinate(priceBot)
     if (y1 === null || y2 === null) continue
     const barW  = (buckets[i] / maxVol) * maxBarW
     const barH  = Math.max(1, Math.abs(y2 - y1))
-    const isPOC = Math.abs(price - pocPrice) < bucketSize
-    const isVA  = price >= valPrice && price <= vahPrice
-    ctx.fillStyle = isPOC ? 'rgba(251,191,36,0.85)'
-                  : isVA  ? 'rgba(96,165,250,0.45)'
-                  :          'rgba(96,165,250,0.2)'
-    ctx.fillRect(rect.width - barW - 62, Math.min(y1, y2), barW, barH)
+    const isPOC = Math.abs(priceMid - pocPrice) < bucketSize
+    const isVA  = priceMid >= valPrice && priceMid <= vahPrice
+    ctx.fillStyle = isPOC ? 'rgba(251,191,36,0.9)'
+                  : isVA  ? 'rgba(96,165,250,0.5)'
+                  :          'rgba(96,165,250,0.22)'
+    ctx.fillRect(canvas.width - PRICE_SCALE_WIDTH - barW, Math.min(y1, y2), barW, barH)
   }
 }
 
@@ -298,8 +299,13 @@ export default function Analysis() {
   const [mode, setMode]             = useState('crypto')
   const [pair, setPair]             = useState('BTC')
   const [stockSymbol, setStockSymbol] = useState('')
-  const [stockInput, setStockInput]   = useState('')
   const [stockError, setStockError]   = useState('')
+  const [stockFavorites, setStockFavorites] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('stockFavorites')) || ['AAPL', 'TSLA', 'NVDA', 'MSFT', 'AMZN'] }
+    catch { return ['AAPL', 'TSLA', 'NVDA', 'MSFT', 'AMZN'] }
+  })
+  const [editingFavorites, setEditingFavorites] = useState(false)
+  const [addStockInput, setAddStockInput]       = useState('')
   const [interval, setInterval]     = useState('1h')
   const [candles, setCandles]   = useState([])
   const [loading, setLoading]   = useState(false)
@@ -318,6 +324,10 @@ export default function Analysis() {
   const adxChart   = useRef(null)
   const sqzChart   = useRef(null)
   const candleRef  = useRef(null)
+
+  useEffect(() => {
+    localStorage.setItem('stockFavorites', JSON.stringify(stockFavorites))
+  }, [stockFavorites])
 
   useEffect(() => {
     if (mode === 'crypto' && !SYMBOLS[pair]) return
@@ -418,7 +428,10 @@ export default function Analysis() {
       if (bar) setOhlcv({ ...bar, volume: candles.find(c => c.time === param.time)?.volume })
     })
 
-    setTimeout(() => drawVP(vpCanvas.current, priceRef, cs, vp), 100)
+    const redrawVP = () => drawVP(vpCanvas.current, priceRef, cs, vp)
+    pc.priceScale('right').subscribeVisiblePriceRangeChange(redrawVP)
+    pc.timeScale().subscribeVisibleLogicalRangeChange(redrawVP)
+    setTimeout(redrawVP, 100)
 
     // ── ADX ──────────────────────────────────────────────────────────────────
     const SUB_TIMESCALE = { ...TV_THEME_NO_TIME.timeScale, rightOffset: 10, fixRightEdge: false, fixLeftEdge: false }
@@ -426,7 +439,7 @@ export default function Analysis() {
       handleScroll: false, handleScale: false,
       timeScale: SUB_TIMESCALE })
     adxChart.current = ac
-    const adxS = ac.addSeries(LineSeries, { color: '#fbbf24', lineWidth: 2, title: 'ADX', priceLineVisible: false, lastValueVisible: false })
+    const adxS = ac.addSeries(LineSeries, { color: '#fbbf24', lineWidth: 2, title: '', priceLineVisible: false, lastValueVisible: false })
     adxS.setData(candles.map((c, i) => adx[i] !== null ? { time: c.time, value: adx[i] } : null).filter(Boolean))
     adxS.createPriceLine({ price: 23, color: 'rgba(239,68,68,0.5)', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: '' })
     // ── Squeeze ───────────────────────────────────────────────────────────────
@@ -469,7 +482,23 @@ export default function Analysis() {
       })
     })
     pc.timeScale().fitContent()
+
+    const syncScaleWidths = () => {
+      const w = Math.max(
+        pc.priceScale('right').width(),
+        ac.priceScale('right').width(),
+        sc.priceScale('right').width(),
+      )
+      if (w > 0) {
+        const opt = { rightPriceScale: { minimumWidth: w } }
+        pc.applyOptions(opt)
+        ac.applyOptions(opt)
+        sc.applyOptions(opt)
+      }
+    }
+
     requestAnimationFrame(() => {
+      syncScaleWidths()
       const range = pc.timeScale().getVisibleRange()
       if (range) {
         ac.timeScale().setVisibleRange(range)
@@ -482,7 +511,8 @@ export default function Analysis() {
       if (priceRef.current) pc.applyOptions({ width: priceRef.current.clientWidth })
       if (adxRef.current)   ac.applyOptions({ width: adxRef.current.clientWidth })
       if (sqzRef.current)   sc.applyOptions({ width: sqzRef.current.clientWidth })
-      if (candleRef.current) drawVP(vpCanvas.current, priceRef, candleRef.current, vp)
+      requestAnimationFrame(syncScaleWidths)
+      if (candleRef.current) setTimeout(() => drawVP(vpCanvas.current, priceRef, candleRef.current, vp), 50)
     })
     obs.observe(priceRef.current)
 
@@ -514,7 +544,7 @@ export default function Analysis() {
                 ${mode === 'crypto' ? 'bg-purple-700 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}>
               Crypto
             </button>
-            <button onClick={() => { setMode('stocks'); setStockSymbol(''); setStockInput(''); setStockError('') }}
+            <button onClick={() => { setMode('stocks'); setStockSymbol(''); setStockError(''); setEditingFavorites(false) }}
               className={`px-3 py-1.5 rounded-lg text-sm font-bold transition-colors
                 ${mode === 'stocks' ? 'bg-blue-700 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}>
               Acciones
@@ -531,21 +561,62 @@ export default function Analysis() {
               </button>
             ))
           ) : (
-            <form onSubmit={e => { e.preventDefault(); const s = stockInput.trim().toUpperCase(); if (s) setStockSymbol(s) }}
-              className="flex gap-2 items-center">
-              <input
-                type="text"
-                value={stockInput}
-                onChange={e => setStockInput(e.target.value.toUpperCase())}
-                placeholder="Ej: AAPL, TSLA, NVDA"
-                className="bg-gray-800 text-white text-sm px-3 py-1.5 rounded-lg border border-gray-700 focus:outline-none focus:border-blue-500 w-48"
-              />
-              <button type="submit"
-                className="px-3 py-1.5 rounded-lg text-sm font-bold bg-blue-700 text-white hover:bg-blue-600 transition-colors">
-                Buscar
+            <>
+              {stockFavorites.map(sym => (
+                <div key={sym} className="relative">
+                  <button
+                    onClick={() => { if (!editingFavorites) { setStockSymbol(sym); setStockError('') } }}
+                    className={`px-3 py-1.5 rounded-lg text-sm font-bold transition-colors
+                      ${stockSymbol === sym && !editingFavorites
+                        ? 'bg-blue-700 text-white'
+                        : editingFavorites
+                          ? 'bg-gray-800 text-gray-500 cursor-default'
+                          : 'bg-gray-800 text-gray-400 hover:text-white'}`}>
+                    {sym}
+                  </button>
+                  {editingFavorites && (
+                    <button
+                      onClick={() => setStockFavorites(prev => prev.filter(s => s !== sym))}
+                      className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-red-600 rounded-full text-white text-xs flex items-center justify-center hover:bg-red-500 leading-none">
+                      ×
+                    </button>
+                  )}
+                </div>
+              ))}
+
+              {editingFavorites && (
+                <form
+                  onSubmit={e => {
+                    e.preventDefault()
+                    const s = addStockInput.trim().toUpperCase()
+                    if (s && !stockFavorites.includes(s)) setStockFavorites(prev => [...prev, s])
+                    setAddStockInput('')
+                  }}
+                  className="flex gap-1 items-center">
+                  <input
+                    type="text"
+                    value={addStockInput}
+                    onChange={e => setAddStockInput(e.target.value.toUpperCase())}
+                    placeholder="Símbolo..."
+                    autoFocus
+                    className="bg-gray-800 text-white text-sm px-2 py-1.5 rounded-lg border border-gray-700 focus:outline-none focus:border-blue-500 w-28"
+                  />
+                  <button type="submit"
+                    className="px-2.5 py-1.5 rounded-lg text-sm font-bold bg-blue-700 text-white hover:bg-blue-600 transition-colors">
+                    +
+                  </button>
+                </form>
+              )}
+
+              <button
+                onClick={() => setEditingFavorites(v => !v)}
+                className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-colors
+                  ${editingFavorites ? 'bg-gray-600 text-white' : 'bg-gray-800 text-gray-500 hover:text-white'}`}>
+                {editingFavorites ? 'Listo' : '✎'}
               </button>
+
               {stockError && <span className="text-red-400 text-xs">{stockError}</span>}
-            </form>
+            </>
           )}
           <div className="w-px bg-gray-700 mx-1" />
           {Object.entries(INTERVALS).map(([k, v]) => (
