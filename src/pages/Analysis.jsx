@@ -429,8 +429,8 @@ export default function Analysis() {
     })
 
     const redrawVP = () => drawVP(vpCanvas.current, priceRef, cs, vp)
-    pc.priceScale('right').subscribeVisiblePriceRangeChange(redrawVP)
     pc.timeScale().subscribeVisibleLogicalRangeChange(redrawVP)
+    priceRef.current.addEventListener('wheel', redrawVP, { passive: true })
     setTimeout(redrawVP, 100)
 
     // ── ADX ──────────────────────────────────────────────────────────────────
@@ -484,11 +484,14 @@ export default function Analysis() {
     pc.timeScale().fitContent()
 
     const syncScaleWidths = () => {
-      const w = Math.max(
-        pc.priceScale('right').width(),
-        ac.priceScale('right').width(),
-        sc.priceScale('right').width(),
-      )
+      const getScaleW = chart => {
+        const el = chart.chartElement()
+        if (!el) return 0
+        const tds = el.querySelectorAll('td')
+        const last = tds[tds.length - 1]
+        return last ? last.offsetWidth : 0
+      }
+      const w = Math.max(getScaleW(pc), getScaleW(ac), getScaleW(sc))
       if (w > 0) {
         const opt = { rightPriceScale: { minimumWidth: w } }
         pc.applyOptions(opt)
