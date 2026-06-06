@@ -243,13 +243,16 @@ function calcSR(candles, lookback = 5, tolerance = 0.003, maxLevels = 6) {
 
 function drawVP(canvas, priceRef, candleSeries, profile) {
   if (!canvas || !priceRef.current) return
-  const rect = priceRef.current.getBoundingClientRect()
-  canvas.width  = rect.width
-  canvas.height = rect.height
+  const w = priceRef.current.clientWidth
+  const h = priceRef.current.clientHeight
+  if (!w || !h) return
+  canvas.width  = w
+  canvas.height = h
   const ctx = canvas.getContext('2d')
-  ctx.clearRect(0, 0, canvas.width, canvas.height)
-  const maxBarW = rect.width * 0.14
+  ctx.clearRect(0, 0, w, h)
+  const maxBarW = w * 0.14
   const { buckets, bucketSize, minPrice, maxVol, pocPrice, vahPrice, valPrice } = profile
+  let drawn = 0
   for (let i = 0; i < buckets.length; i++) {
     const priceTop = minPrice + (i + 1) * bucketSize
     const priceBot = minPrice + i       * bucketSize
@@ -264,13 +267,15 @@ function drawVP(canvas, priceRef, candleSeries, profile) {
     ctx.fillStyle = isPOC ? 'rgba(251,191,36,0.9)'
                   : isVA  ? 'rgba(96,165,250,0.5)'
                   :          'rgba(96,165,250,0.22)'
-    ctx.fillRect(canvas.width - PRICE_SCALE_WIDTH - barW, Math.min(y1, y2), barW, barH)
+    ctx.fillRect(w - PRICE_SCALE_WIDTH - barW, Math.min(y1, y2), barW, barH)
+    drawn++
   }
+  return drawn
 }
 
 // ── Tema TradingView ─────────────────────────────────────────────────────────
 
-const PRICE_SCALE_WIDTH = 80
+const PRICE_SCALE_WIDTH = 90
 
 const fmtSantiago = ts => new Date(ts * 1000).toLocaleString('es-CL', {
   timeZone: 'America/Santiago',
@@ -428,10 +433,10 @@ export default function Analysis() {
       if (bar) setOhlcv({ ...bar, volume: candles.find(c => c.time === param.time)?.volume })
     })
 
-    const redrawVP = () => drawVP(vpCanvas.current, priceRef, cs, vp)
+    // rAF garantiza que priceToCoordinate tiene coordenadas del frame ya renderizado
+    const redrawVP = () => requestAnimationFrame(() => drawVP(vpCanvas.current, priceRef, cs, vp))
     pc.timeScale().subscribeVisibleLogicalRangeChange(redrawVP)
     priceRef.current.addEventListener('wheel', redrawVP, { passive: true })
-    setTimeout(redrawVP, 100)
 
     // ── ADX ──────────────────────────────────────────────────────────────────
     const SUB_TIMESCALE = { ...TV_THEME_NO_TIME.timeScale, rightOffset: 10, fixRightEdge: false, fixLeftEdge: false }
@@ -483,25 +488,9 @@ export default function Analysis() {
     })
     pc.timeScale().fitContent()
 
-    const syncScaleWidths = () => {
-      const getScaleW = chart => {
-        const el = chart.chartElement()
-        if (!el) return 0
-        const tds = el.querySelectorAll('td')
-        const last = tds[tds.length - 1]
-        return last ? last.offsetWidth : 0
-      }
-      const w = Math.max(getScaleW(pc), getScaleW(ac), getScaleW(sc))
-      if (w > 0) {
-        const opt = { rightPriceScale: { minimumWidth: w } }
-        pc.applyOptions(opt)
-        ac.applyOptions(opt)
-        sc.applyOptions(opt)
-      }
-    }
-
     requestAnimationFrame(() => {
-      syncScaleWidths()
+      // dibuja VP luego del primer render del chart
+      drawVP(vpCanvas.current, priceRef, cs, vp)
       const range = pc.timeScale().getVisibleRange()
       if (range) {
         ac.timeScale().setVisibleRange(range)
@@ -514,8 +503,7 @@ export default function Analysis() {
       if (priceRef.current) pc.applyOptions({ width: priceRef.current.clientWidth })
       if (adxRef.current)   ac.applyOptions({ width: adxRef.current.clientWidth })
       if (sqzRef.current)   sc.applyOptions({ width: sqzRef.current.clientWidth })
-      requestAnimationFrame(syncScaleWidths)
-      if (candleRef.current) setTimeout(() => drawVP(vpCanvas.current, priceRef, candleRef.current, vp), 50)
+      requestAnimationFrame(() => drawVP(vpCanvas.current, priceRef, cs, vp))
     })
     obs.observe(priceRef.current)
 
