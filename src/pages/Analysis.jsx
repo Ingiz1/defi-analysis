@@ -365,8 +365,8 @@ export default function Analysis() {
       setTimeLeft(rem > 0 ? rem : null)
     }
     tick()
-    const timer = setInterval(tick, 1000)
-    return () => clearInterval(timer)
+    const timer = window.setInterval(tick, 1000)
+    return () => window.clearInterval(timer)
   }, [candles, interval])
 
   useEffect(() => {
