@@ -251,7 +251,6 @@ class VPRenderer {
     const { buckets, bucketSize, minPrice, maxVol, pocPrice, vahPrice, valPrice } = this._p
     target.useBitmapCoordinateSpace(({ context: ctx, bitmapSize, horizontalPixelRatio, verticalPixelRatio }) => {
       const maxBarW = bitmapSize.width * 0.14
-      const rightPad = PRICE_SCALE_WIDTH * horizontalPixelRatio
       for (let i = 0; i < buckets.length; i++) {
         const priceTop = minPrice + (i + 1) * bucketSize
         const priceBot = minPrice + i       * bucketSize
@@ -268,7 +267,7 @@ class VPRenderer {
         ctx.fillStyle = isPOC ? 'rgba(251,191,36,0.9)'
                       : isVA  ? 'rgba(96,165,250,0.5)'
                       :          'rgba(96,165,250,0.22)'
-        ctx.fillRect(bitmapSize.width - rightPad - barW, Math.min(y1, y2), barW, barH)
+        ctx.fillRect(bitmapSize.width - barW, Math.min(y1, y2), barW, barH)
       }
     })
   }
