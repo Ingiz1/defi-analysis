@@ -239,38 +239,52 @@ function calcSR(candles, lookback = 5, tolerance = 0.003, maxLevels = 6) {
   return levels.sort((a, b) => b.touches - a.touches).slice(0, maxLevels)
 }
 
-// ── Canvas Volume Profile ────────────────────────────────────────────────────
+// ── Volume Profile Primitive (dibuja directo sobre el canvas del chart) ──────
 
-function drawVP(canvas, priceRef, candleSeries, profile) {
-  if (!canvas || !priceRef.current) return
-  const w = priceRef.current.clientWidth
-  const h = priceRef.current.clientHeight
-  if (!w || !h) return
-  canvas.width  = w
-  canvas.height = h
-  const ctx = canvas.getContext('2d')
-  ctx.clearRect(0, 0, w, h)
-  const maxBarW = w * 0.14
-  const { buckets, bucketSize, minPrice, maxVol, pocPrice, vahPrice, valPrice } = profile
-  let drawn = 0
-  for (let i = 0; i < buckets.length; i++) {
-    const priceTop = minPrice + (i + 1) * bucketSize
-    const priceBot = minPrice + i       * bucketSize
-    const priceMid = minPrice + (i + 0.5) * bucketSize
-    const y1 = candleSeries.priceToCoordinate(priceTop)
-    const y2 = candleSeries.priceToCoordinate(priceBot)
-    if (y1 === null || y2 === null) continue
-    const barW  = (buckets[i] / maxVol) * maxBarW
-    const barH  = Math.max(1, Math.abs(y2 - y1))
-    const isPOC = Math.abs(priceMid - pocPrice) < bucketSize
-    const isVA  = priceMid >= valPrice && priceMid <= vahPrice
-    ctx.fillStyle = isPOC ? 'rgba(251,191,36,0.9)'
-                  : isVA  ? 'rgba(96,165,250,0.5)'
-                  :          'rgba(96,165,250,0.22)'
-    ctx.fillRect(w - PRICE_SCALE_WIDTH - barW, Math.min(y1, y2), barW, barH)
-    drawn++
+class VPRenderer {
+  constructor(profile, series) {
+    this._p = profile
+    this._s = series
   }
-  return drawn
+  draw(target) {
+    const s = this._s
+    const { buckets, bucketSize, minPrice, maxVol, pocPrice, vahPrice, valPrice } = this._p
+    target.useBitmapCoordinateSpace(({ context: ctx, bitmapSize, horizontalPixelRatio, verticalPixelRatio }) => {
+      const maxBarW = bitmapSize.width * 0.14
+      const rightPad = PRICE_SCALE_WIDTH * horizontalPixelRatio
+      for (let i = 0; i < buckets.length; i++) {
+        const priceTop = minPrice + (i + 1) * bucketSize
+        const priceBot = minPrice + i       * bucketSize
+        const priceMid = minPrice + (i + 0.5) * bucketSize
+        const y1css = s.priceToCoordinate(priceTop)
+        const y2css = s.priceToCoordinate(priceBot)
+        if (y1css === null || y2css === null) continue
+        const y1   = y1css * verticalPixelRatio
+        const y2   = y2css * verticalPixelRatio
+        const barW = (buckets[i] / maxVol) * maxBarW
+        const barH = Math.max(1, Math.abs(y2 - y1))
+        const isPOC = Math.abs(priceMid - pocPrice) < bucketSize
+        const isVA  = priceMid >= valPrice && priceMid <= vahPrice
+        ctx.fillStyle = isPOC ? 'rgba(251,191,36,0.9)'
+                      : isVA  ? 'rgba(96,165,250,0.5)'
+                      :          'rgba(96,165,250,0.22)'
+        ctx.fillRect(bitmapSize.width - rightPad - barW, Math.min(y1, y2), barW, barH)
+      }
+    })
+  }
+}
+
+class VPPaneView {
+  constructor(profile, series) { this._p = profile; this._s = series }
+  renderer() { return new VPRenderer(this._p, this._s) }
+}
+
+class VPPrimitive {
+  constructor(profile) { this._p = profile; this._s = null }
+  attached({ series }) { this._s = series }
+  detached()           { this._s = null  }
+  updateAllViews()     {}
+  paneViews()          { return this._s ? [new VPPaneView(this._p, this._s)] : [] }
 }
 
 // ── Tema TradingView ─────────────────────────────────────────────────────────
@@ -324,7 +338,6 @@ export default function Analysis() {
   const priceRef   = useRef(null)
   const adxRef     = useRef(null)
   const sqzRef     = useRef(null)
-  const vpCanvas   = useRef(null)
   const priceChart = useRef(null)
   const adxChart   = useRef(null)
   const sqzChart   = useRef(null)
@@ -419,7 +432,8 @@ export default function Analysis() {
       })
     }
 
-    // Volume Profile: POC, VAH, VAL — solo etiqueta en eje derecho
+    // Volume Profile: barras laterales via primitive + líneas POC/VAH/VAL
+    cs.attachPrimitive(new VPPrimitive(vp))
     cs.createPriceLine({ price: vp.pocPrice, color: '#fbbf24', lineWidth: 1, lineStyle: 0, axisLabelVisible: true, title: '' })
     cs.createPriceLine({ price: vp.vahPrice, color: 'rgba(96,165,250,0.5)', lineWidth: 1, lineStyle: 3, axisLabelVisible: false, title: '' })
     cs.createPriceLine({ price: vp.valPrice, color: 'rgba(96,165,250,0.5)', lineWidth: 1, lineStyle: 3, axisLabelVisible: false, title: '' })
@@ -432,11 +446,6 @@ export default function Analysis() {
       const bar = param.seriesData.get(cs)
       if (bar) setOhlcv({ ...bar, volume: candles.find(c => c.time === param.time)?.volume })
     })
-
-    // rAF garantiza que priceToCoordinate tiene coordenadas del frame ya renderizado
-    const redrawVP = () => requestAnimationFrame(() => drawVP(vpCanvas.current, priceRef, cs, vp))
-    pc.timeScale().subscribeVisibleLogicalRangeChange(redrawVP)
-    priceRef.current.addEventListener('wheel', redrawVP, { passive: true })
 
     // ── ADX ──────────────────────────────────────────────────────────────────
     const SUB_TIMESCALE = { ...TV_THEME_NO_TIME.timeScale, rightOffset: 10, fixRightEdge: false, fixLeftEdge: false }
@@ -489,8 +498,6 @@ export default function Analysis() {
     pc.timeScale().fitContent()
 
     requestAnimationFrame(() => {
-      // dibuja VP luego del primer render del chart
-      drawVP(vpCanvas.current, priceRef, cs, vp)
       const range = pc.timeScale().getVisibleRange()
       if (range) {
         ac.timeScale().setVisibleRange(range)
@@ -503,7 +510,6 @@ export default function Analysis() {
       if (priceRef.current) pc.applyOptions({ width: priceRef.current.clientWidth })
       if (adxRef.current)   ac.applyOptions({ width: adxRef.current.clientWidth })
       if (sqzRef.current)   sc.applyOptions({ width: sqzRef.current.clientWidth })
-      requestAnimationFrame(() => drawVP(vpCanvas.current, priceRef, cs, vp))
     })
     obs.observe(priceRef.current)
 
@@ -735,11 +741,7 @@ export default function Analysis() {
             )}
           </div>
 
-          {/* Velas + VP canvas overlay */}
-          <div className="relative">
-            <div ref={priceRef} className="w-full" />
-            <canvas ref={vpCanvas} className="absolute inset-0 pointer-events-none" />
-          </div>
+          <div ref={priceRef} className="w-full" />
 
           <div className="px-4 pt-2 pb-0 text-xs text-yellow-400 font-bold" style={{ background: '#131722' }}>
             ADX (14) — línea roja = 23
