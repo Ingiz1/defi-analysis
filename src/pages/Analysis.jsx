@@ -19,11 +19,20 @@ const SYMBOLS = {
 }
 
 const INTERVALS = {
-  '15m': { label: '15M', binance: '15m', limit: 200 },
-  '1h':  { label: '1H',  binance: '1h',  limit: 200 },
-  '4h':  { label: '4H',  binance: '4h',  limit: 200 },
-  '1d':  { label: '1D',  binance: '1d',  limit: 200 },
-  '1w':  { label: '1S',  binance: '1w',  limit: 100 },
+  '15m': { label: '15M', binance: '15m', limit: 200, seconds: 15 * 60 },
+  '1h':  { label: '1H',  binance: '1h',  limit: 200, seconds: 60 * 60 },
+  '4h':  { label: '4H',  binance: '4h',  limit: 200, seconds: 4 * 60 * 60 },
+  '1d':  { label: '1D',  binance: '1d',  limit: 200, seconds: 24 * 60 * 60 },
+  '1w':  { label: '1S',  binance: '1w',  limit: 100, seconds: 7 * 24 * 60 * 60 },
+}
+
+function fmtCountdown(sec) {
+  if (sec <= 0) return null
+  const h = Math.floor(sec / 3600)
+  const m = Math.floor((sec % 3600) / 60)
+  const s = sec % 60
+  if (h > 0) return `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`
+  return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`
 }
 
 async function fetchCandles(pair, interval) {
@@ -333,6 +342,7 @@ export default function Analysis() {
   const [vpInfo, setVpInfo]     = useState(null)
   const [emaLast, setEmaLast]   = useState({ ema10: null, ema55: null })
   const [ohlcv, setOhlcv]       = useState(null)
+  const [timeLeft, setTimeLeft] = useState(null)
 
   const priceRef   = useRef(null)
   const adxRef     = useRef(null)
@@ -345,6 +355,19 @@ export default function Analysis() {
   useEffect(() => {
     localStorage.setItem('stockFavorites', JSON.stringify(stockFavorites))
   }, [stockFavorites])
+
+  useEffect(() => {
+    if (!candles.length) { setTimeLeft(null); return }
+    const intervalSec = INTERVALS[interval].seconds
+    const closeTime   = candles[candles.length - 1].time + intervalSec
+    const tick = () => {
+      const rem = closeTime - Math.floor(Date.now() / 1000)
+      setTimeLeft(rem > 0 ? rem : null)
+    }
+    tick()
+    const timer = setInterval(tick, 1000)
+    return () => clearInterval(timer)
+  }, [candles, interval])
 
   useEffect(() => {
     if (mode === 'crypto' && !SYMBOLS[pair]) return
@@ -730,14 +753,21 @@ export default function Analysis() {
             <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm bg-green-400 inline-block" />Soporte</span>
             <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm bg-red-400 inline-block" />Resistencia</span>
             <span className="flex items-center gap-1.5"><span className="w-3 h-0.5 bg-yellow-400 inline-block" />POC</span>
-            {ohlcv && (
-              <span className="ml-auto flex gap-3 font-mono text-xs">
-                <span>O <span className="text-white">{ohlcv.open?.toFixed(2)}</span></span>
-                <span>H <span className="text-green-400">{ohlcv.high?.toFixed(2)}</span></span>
-                <span>L <span className="text-red-400">{ohlcv.low?.toFixed(2)}</span></span>
-                <span>C <span className={ohlcv.close >= ohlcv.open ? 'text-green-400' : 'text-red-400'}>{ohlcv.close?.toFixed(2)}</span></span>
-              </span>
-            )}
+            <span className="ml-auto flex items-center gap-4 font-mono text-xs">
+              {timeLeft && (
+                <span className="text-gray-500">
+                  cierra en <span className="text-orange-400 font-bold">{fmtCountdown(timeLeft)}</span>
+                </span>
+              )}
+              {ohlcv && (
+                <span className="flex gap-3">
+                  <span>O <span className="text-white">{ohlcv.open?.toFixed(2)}</span></span>
+                  <span>H <span className="text-green-400">{ohlcv.high?.toFixed(2)}</span></span>
+                  <span>L <span className="text-red-400">{ohlcv.low?.toFixed(2)}</span></span>
+                  <span>C <span className={ohlcv.close >= ohlcv.open ? 'text-green-400' : 'text-red-400'}>{ohlcv.close?.toFixed(2)}</span></span>
+                </span>
+              )}
+            </span>
           </div>
 
           <div ref={priceRef} className="w-full" />
