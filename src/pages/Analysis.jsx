@@ -53,21 +53,39 @@ async function fetchCandles(pair, interval) {
 // ── Yahoo Finance API (Acciones) ─────────────────────────────────────────────
 
 const YF_INTERVALS = {
-  '15m': { yf: '15m',  range: '5d'   },
-  '1h':  { yf: '60m',  range: '30d'  },
-  '4h':  { yf: '1d',   range: '6mo'  },
-  '1d':  { yf: '1d',   range: '1y'   },
-  '1w':  { yf: '1wk',  range: '5y'   },
+  '15m': { yf: '15m',  range: '5d',   aggregate: null },
+  '1h':  { yf: '60m',  range: '30d',  aggregate: null },
+  '4h':  { yf: '60m',  range: '60d',  aggregate: 4    },
+  '1d':  { yf: '1d',   range: '1y',   aggregate: null },
+  '1w':  { yf: '1wk',  range: '5y',   aggregate: null },
+}
+
+function aggregateToNHours(candles, n) {
+  const bucketSec = n * 3600
+  const map = {}
+  for (const c of candles) {
+    const key = Math.floor(c.time / bucketSec) * bucketSec
+    if (!map[key]) {
+      map[key] = { time: key, open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume }
+    } else {
+      const g = map[key]
+      g.high   = Math.max(g.high, c.high)
+      g.low    = Math.min(g.low, c.low)
+      g.close  = c.close
+      g.volume += c.volume
+    }
+  }
+  return Object.values(map).sort((a, b) => a.time - b.time)
 }
 
 async function fetchCandlesStock(symbol, interval) {
-  const { yf, range } = YF_INTERVALS[interval]
+  const { yf, range, aggregate } = YF_INTERVALS[interval]
   const res = await fetch(`/api/stock?symbol=${symbol.toUpperCase()}&interval=${yf}&range=${range}`)
   const data = await res.json()
   const result = data.chart?.result?.[0]
   if (!result) throw new Error('Sin datos para ' + symbol)
   const { timestamp, indicators: { quote: [q] } } = result
-  return timestamp
+  const candles = timestamp
     .map((t, i) => ({
       time:   t,
       open:   q.open[i],
@@ -77,6 +95,7 @@ async function fetchCandlesStock(symbol, interval) {
       volume: q.volume[i] ?? 0,
     }))
     .filter(c => c.open != null && c.close != null)
+  return aggregate ? aggregateToNHours(candles, aggregate) : candles
 }
 
 // ── Indicadores ──────────────────────────────────────────────────────────────
@@ -343,6 +362,8 @@ export default function Analysis() {
   const [emaLast, setEmaLast]   = useState({ ema10: null, ema55: null })
   const [ohlcv, setOhlcv]       = useState(null)
   const [timeLeft, setTimeLeft] = useState(null)
+  const [stockInfo, setStockInfo]   = useState(null)
+  const [descExpanded, setDescExpanded] = useState(false)
 
   const priceRef   = useRef(null)
   const adxRef     = useRef(null)
@@ -381,6 +402,27 @@ export default function Analysis() {
       .then(d => { setCandles(d); setLoading(false) })
       .catch(() => { setLoading(false); if (mode === 'stocks') setStockError('Símbolo no encontrado') })
   }, [pair, interval, mode, stockSymbol])
+
+  useEffect(() => {
+    if (mode !== 'stocks' || !stockSymbol) { setStockInfo(null); return }
+    setDescExpanded(false)
+    fetch(`/api/info?symbol=${stockSymbol.toUpperCase()}`)
+      .then(r => r.json())
+      .then(data => {
+        const result = data.quoteSummary?.result?.[0]
+        if (!result) return
+        const ap = result.assetProfile ?? {}
+        const fp = result.fundProfile  ?? {}
+        const pr = result.price        ?? {}
+        setStockInfo({
+          name:     pr.shortName || pr.longName || stockSymbol,
+          sector:   ap.sector   || fp.categoryName || null,
+          industry: ap.industry || null,
+          desc:     ap.longBusinessSummary || null,
+        })
+      })
+      .catch(() => setStockInfo(null))
+  }, [mode, stockSymbol])
 
   const rebuildCharts = useCallback(() => {
     if (!candles.length || !priceRef.current || !adxRef.current || !sqzRef.current) return
@@ -709,6 +751,35 @@ export default function Analysis() {
           </div>
         </div>
       </div>
+
+      {/* Info empresa / ETF */}
+      {mode === 'stocks' && stockInfo && (
+        <div className="bg-gray-900 border border-gray-800 rounded-xl px-4 py-3 text-sm flex flex-col gap-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-white font-bold">{stockInfo.name}</span>
+            {stockInfo.sector && (
+              <span className="bg-blue-900 text-blue-300 text-xs font-medium px-2 py-0.5 rounded-full">
+                {stockInfo.sector}
+              </span>
+            )}
+            {stockInfo.industry && (
+              <span className="text-gray-500 text-xs">{stockInfo.industry}</span>
+            )}
+          </div>
+          {stockInfo.desc && (
+            <p className="text-gray-400 text-xs leading-relaxed">
+              {descExpanded ? stockInfo.desc : stockInfo.desc.slice(0, 200) + (stockInfo.desc.length > 200 ? '…' : '')}
+              {stockInfo.desc.length > 200 && (
+                <button
+                  onClick={() => setDescExpanded(v => !v)}
+                  className="ml-1.5 text-blue-400 hover:text-blue-300 transition-colors font-medium">
+                  {descExpanded ? 'ver menos' : 'ver más'}
+                </button>
+              )}
+            </p>
+          )}
+        </div>
+      )}
 
       {/* Alerta lateral */}
       {isLateral && !loading && (
