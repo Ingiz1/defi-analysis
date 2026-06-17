@@ -793,24 +793,6 @@ export default function Analysis() {
         </div>
       )}
 
-      {/* Info VP + S/R */}
-      {vpInfo && !loading && (
-        <div className="flex gap-4 text-xs flex-wrap">
-          <span className="text-gray-500">Volume Profile:</span>
-          <span className="text-yellow-400 font-bold">POC ${vpInfo.pocPrice.toFixed(0)}</span>
-          <span className="text-blue-400">VAH ${vpInfo.vahPrice.toFixed(0)}</span>
-          <span className="text-blue-400">VAL ${vpInfo.valPrice.toFixed(0)}</span>
-          {srLevels.length > 0 && <>
-            <span className="text-gray-500 ml-2">S/R:</span>
-            {srLevels.map((l, i) => (
-              <span key={i} className={l.type === 'resistance' ? 'text-red-400' : 'text-green-400'}>
-                {l.type === 'resistance' ? 'R' : 'S'} ${l.price.toFixed(0)} ({l.touches})
-              </span>
-            ))}
-          </>}
-        </div>
-      )}
-
       {loading && (
         <div className="h-64 flex items-center justify-center text-gray-500 text-sm">
           {mode === 'crypto' ? 'Cargando datos de Binance...' : `Cargando ${stockSymbol}...`}
