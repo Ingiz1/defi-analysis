@@ -216,37 +216,6 @@ function calcSqueeze(candles, bbLen = 20, bbMult = 2.0, kcLen = 20, kcMult = 1.5
   return { momentum, sqzOn, sqzOff }
 }
 
-// ── Volume Profile ───────────────────────────────────────────────────────────
-
-function calcVolumeProfile(candles, numBuckets = 120) {
-  const maxP = Math.max(...candles.map(c => c.high))
-  const minP = Math.min(...candles.map(c => c.low))
-  const bucketSize = (maxP - minP) / numBuckets
-  const buckets = new Array(numBuckets).fill(0)
-  for (const c of candles) {
-    const range = c.high - c.low || 0.0001
-    const volPerPrice = c.volume / range
-    const lo = Math.max(0, Math.floor((c.low  - minP) / bucketSize))
-    const hi = Math.min(numBuckets - 1, Math.floor((c.high - minP) / bucketSize))
-    for (let b = lo; b <= hi; b++) buckets[b] += volPerPrice * bucketSize
-  }
-  const maxVol = Math.max(...buckets)
-  const pocIdx = buckets.indexOf(maxVol)
-  const pocPrice = minP + (pocIdx + 0.5) * bucketSize
-  const totalVol = buckets.reduce((a, b) => a + b, 0)
-  let lo = pocIdx, hi = pocIdx, acc = buckets[pocIdx]
-  while (acc < totalVol * 0.7) {
-    const expL = lo > 0 ? buckets[lo - 1] : 0
-    const expH = hi < numBuckets - 1 ? buckets[hi + 1] : 0
-    if (expL >= expH && lo > 0) { lo--; acc += buckets[lo] }
-    else if (hi < numBuckets - 1) { hi++; acc += buckets[hi] }
-    else break
-  }
-  return { buckets, bucketSize, minPrice: minP, maxVol, pocPrice,
-    vahPrice: minP + (hi + 1) * bucketSize,
-    valPrice: minP + lo * bucketSize }
-}
-
 // ── Soporte / Resistencia ────────────────────────────────────────────────────
 
 function calcSR(candles, lookback = 5, tolerance = 0.003, maxLevels = 6) {
@@ -265,53 +234,6 @@ function calcSR(candles, lookback = 5, tolerance = 0.003, maxLevels = 6) {
     else levels.push({ ...p, touches: 1 })
   }
   return levels.sort((a, b) => b.touches - a.touches).slice(0, maxLevels)
-}
-
-// ── Volume Profile Primitive (dibuja directo sobre el canvas del chart) ──────
-
-class VPRenderer {
-  constructor(profile, series) {
-    this._p = profile
-    this._s = series
-  }
-  draw(target) {
-    const s = this._s
-    const { buckets, bucketSize, minPrice, maxVol, pocPrice, vahPrice, valPrice } = this._p
-    target.useBitmapCoordinateSpace(({ context: ctx, bitmapSize, horizontalPixelRatio, verticalPixelRatio }) => {
-      const maxBarW = bitmapSize.width * 0.14
-      for (let i = 0; i < buckets.length; i++) {
-        const priceTop = minPrice + (i + 1) * bucketSize
-        const priceBot = minPrice + i       * bucketSize
-        const priceMid = minPrice + (i + 0.5) * bucketSize
-        const y1css = s.priceToCoordinate(priceTop)
-        const y2css = s.priceToCoordinate(priceBot)
-        if (y1css === null || y2css === null) continue
-        const y1   = y1css * verticalPixelRatio
-        const y2   = y2css * verticalPixelRatio
-        const barW = (buckets[i] / maxVol) * maxBarW
-        const barH = Math.max(1, Math.abs(y2 - y1))
-        const isPOC = Math.abs(priceMid - pocPrice) < bucketSize
-        const isVA  = priceMid >= valPrice && priceMid <= vahPrice
-        ctx.fillStyle = isPOC ? 'rgba(251,191,36,0.9)'
-                      : isVA  ? 'rgba(96,165,250,0.5)'
-                      :          'rgba(96,165,250,0.22)'
-        ctx.fillRect(bitmapSize.width - barW, Math.min(y1, y2), barW, barH)
-      }
-    })
-  }
-}
-
-class VPPaneView {
-  constructor(profile, series) { this._p = profile; this._s = series }
-  renderer() { return new VPRenderer(this._p, this._s) }
-}
-
-class VPPrimitive {
-  constructor(profile) { this._p = profile; this._s = null }
-  attached({ series }) { this._s = series }
-  detached()           { this._s = null  }
-  updateAllViews()     {}
-  paneViews()          { return this._s ? [new VPPaneView(this._p, this._s)] : [] }
 }
 
 // ── Tema TradingView ─────────────────────────────────────────────────────────
@@ -358,7 +280,6 @@ export default function Analysis() {
   const [adxValue, setAdxValue] = useState(null)
   const [sqzState, setSqzState] = useState(null)
   const [srLevels, setSrLevels] = useState([])
-  const [vpInfo, setVpInfo]     = useState(null)
   const [emaLast, setEmaLast]   = useState({ ema10: null, ema55: null })
   const [ohlcv, setOhlcv]       = useState(null)
   const [timeLeft, setTimeLeft] = useState(null)
@@ -436,13 +357,11 @@ export default function Analysis() {
     const adx    = calcADX(candles)
     const { momentum, sqzOn, sqzOff } = calcSqueeze(candles)
     const sr     = calcSR(candles)
-    const vp     = calcVolumeProfile(candles)
 
     const lastAdx = [...adx].reverse().find(v => v !== null)
     setAdxValue(lastAdx ? lastAdx.toFixed(1) : null)
     setSqzState(sqzOn[sqzOn.length - 1] ? 'on' : sqzOff[sqzOff.length - 1] ? 'off' : 'none')
     setSrLevels(sr)
-    setVpInfo(vp)
     setEmaLast({
       ema10: [...ema10].reverse().find(v => v !== null),
       ema55: [...ema55].reverse().find(v => v !== null),
@@ -482,24 +401,18 @@ export default function Analysis() {
       color: c.close >= c.open ? 'rgba(38,166,154,0.4)' : 'rgba(239,83,80,0.4)',
     })))
 
-    // S/R como price lines — sin título flotante, solo etiqueta en el eje
+    // S/R con etiqueta en el eje
     for (const lvl of sr) {
       const isRes = lvl.type === 'resistance'
       cs.createPriceLine({
         price: lvl.price,
-        color: isRes ? 'rgba(239,83,80,0.6)' : 'rgba(38,166,154,0.6)',
+        color: isRes ? 'rgba(239,83,80,0.85)' : 'rgba(38,166,154,0.85)',
         lineWidth: 1,
         lineStyle: 2,
         axisLabelVisible: true,
-        title: '',
+        title: isRes ? 'R' : 'S',
       })
     }
-
-    // Volume Profile: barras laterales via primitive + líneas POC/VAH/VAL
-    cs.attachPrimitive(new VPPrimitive(vp))
-    cs.createPriceLine({ price: vp.pocPrice, color: '#fbbf24', lineWidth: 1, lineStyle: 0, axisLabelVisible: true, title: '' })
-    cs.createPriceLine({ price: vp.vahPrice, color: 'rgba(96,165,250,0.5)', lineWidth: 1, lineStyle: 3, axisLabelVisible: false, title: '' })
-    cs.createPriceLine({ price: vp.valPrice, color: 'rgba(96,165,250,0.5)', lineWidth: 1, lineStyle: 3, axisLabelVisible: false, title: '' })
 
     pc.timeScale().fitContent()
 
@@ -807,9 +720,8 @@ export default function Analysis() {
             <span className="text-gray-400 font-bold">{mode === 'crypto' ? pair : stockSymbol}</span>
             <span className="flex items-center gap-1.5"><span className="w-3 h-0.5 bg-blue-400 inline-block" />EMA 10</span>
             <span className="flex items-center gap-1.5"><span className="w-3 h-0.5 bg-purple-400 inline-block" />EMA 55</span>
-            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm bg-green-400 inline-block" />Soporte</span>
-            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm bg-red-400 inline-block" />Resistencia</span>
-            <span className="flex items-center gap-1.5"><span className="w-3 h-0.5 bg-yellow-400 inline-block" />POC</span>
+            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm bg-green-400 inline-block" />S — Soporte</span>
+            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm bg-red-400 inline-block" />R — Resistencia</span>
             <span className="ml-auto flex items-center gap-4 font-mono text-xs">
               {timeLeft && (
                 <span className="text-gray-500">
