@@ -216,25 +216,7 @@ function calcSqueeze(candles, bbLen = 20, bbMult = 2.0, kcLen = 20, kcMult = 1.5
   return { momentum, sqzOn, sqzOff }
 }
 
-// ── Soporte / Resistencia ────────────────────────────────────────────────────
 
-function calcSR(candles, lookback = 5, tolerance = 0.003, maxLevels = 6) {
-  const pivots = []
-  for (let i = lookback; i < candles.length - lookback; i++) {
-    const win = candles.slice(i - lookback, i + lookback + 1)
-    if (candles[i].high === Math.max(...win.map(c => c.high)))
-      pivots.push({ price: candles[i].high, type: 'resistance' })
-    if (candles[i].low === Math.min(...win.map(c => c.low)))
-      pivots.push({ price: candles[i].low, type: 'support' })
-  }
-  const levels = []
-  for (const p of pivots) {
-    const ex = levels.find(l => l.type === p.type && Math.abs(l.price - p.price) / p.price < tolerance)
-    if (ex) { ex.touches++; ex.price = (ex.price * (ex.touches - 1) + p.price) / ex.touches }
-    else levels.push({ ...p, touches: 1 })
-  }
-  return levels.sort((a, b) => b.touches - a.touches).slice(0, maxLevels)
-}
 
 // ── Tema TradingView ─────────────────────────────────────────────────────────
 
@@ -279,7 +261,6 @@ export default function Analysis() {
   const [loading, setLoading]   = useState(false)
   const [adxValue, setAdxValue] = useState(null)
   const [sqzState, setSqzState] = useState(null)
-  const [srLevels, setSrLevels] = useState([])
   const [emaLast, setEmaLast]   = useState({ ema10: null, ema55: null })
   const [ohlcv, setOhlcv]       = useState(null)
   const [timeLeft, setTimeLeft] = useState(null)
@@ -356,12 +337,9 @@ export default function Analysis() {
     const ema55  = calcEMA(closes, 55)
     const adx    = calcADX(candles)
     const { momentum, sqzOn, sqzOff } = calcSqueeze(candles)
-    const sr     = calcSR(candles)
-
     const lastAdx = [...adx].reverse().find(v => v !== null)
     setAdxValue(lastAdx ? lastAdx.toFixed(1) : null)
     setSqzState(sqzOn[sqzOn.length - 1] ? 'on' : sqzOff[sqzOff.length - 1] ? 'off' : 'none')
-    setSrLevels(sr)
     setEmaLast({
       ema10: [...ema10].reverse().find(v => v !== null),
       ema55: [...ema55].reverse().find(v => v !== null),
@@ -400,19 +378,6 @@ export default function Analysis() {
       value: c.volume,
       color: c.close >= c.open ? 'rgba(38,166,154,0.4)' : 'rgba(239,83,80,0.4)',
     })))
-
-    // S/R con etiqueta en el eje
-    for (const lvl of sr) {
-      const isRes = lvl.type === 'resistance'
-      cs.createPriceLine({
-        price: lvl.price,
-        color: isRes ? 'rgba(239,83,80,0.85)' : 'rgba(38,166,154,0.85)',
-        lineWidth: 1,
-        lineStyle: 2,
-        axisLabelVisible: true,
-        title: isRes ? 'R' : 'S',
-      })
-    }
 
     pc.timeScale().fitContent()
 
@@ -720,8 +685,6 @@ export default function Analysis() {
             <span className="text-gray-400 font-bold">{mode === 'crypto' ? pair : stockSymbol}</span>
             <span className="flex items-center gap-1.5"><span className="w-3 h-0.5 bg-blue-400 inline-block" />EMA 10</span>
             <span className="flex items-center gap-1.5"><span className="w-3 h-0.5 bg-purple-400 inline-block" />EMA 55</span>
-            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm bg-green-400 inline-block" />S — Soporte</span>
-            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm bg-red-400 inline-block" />R — Resistencia</span>
             <span className="ml-auto flex items-center gap-4 font-mono text-xs">
               {timeLeft && (
                 <span className="text-gray-500">
