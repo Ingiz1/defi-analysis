@@ -216,7 +216,94 @@ function calcSqueeze(candles, bbLen = 20, bbMult = 2.0, kcLen = 20, kcMult = 1.5
   return { momentum, sqzOn, sqzOff }
 }
 
+// ── Drawing Primitives ───────────────────────────────────────────────────────
 
+class LinePrimitive {
+  constructor(p1, p2) { this._p1 = p1; this._p2 = p2; this._s = null; this._c = null }
+  attached({ series, chart }) { this._s = series; this._c = chart }
+  detached() { this._s = null; this._c = null }
+  updateAllViews() {}
+  paneViews() {
+    if (!this._s || !this._c) return []
+    const s = this._s, c = this._c, p1 = this._p1, p2 = this._p2
+    return [{
+      renderer() {
+        return {
+          draw(target) {
+            target.useBitmapCoordinateSpace(({ context: ctx, bitmapSize, horizontalPixelRatio: hr, verticalPixelRatio: vr }) => {
+              const x1c = c.timeScale().timeToCoordinate(p1.time)
+              const x2c = c.timeScale().timeToCoordinate(p2.time)
+              const y1c = s.priceToCoordinate(p1.price)
+              const y2c = s.priceToCoordinate(p2.price)
+              if (x1c == null || x2c == null || y1c == null || y2c == null) return
+              const x1 = x1c * hr, y1 = y1c * vr, x2 = x2c * hr, y2 = y2c * vr
+              const W = bitmapSize.width
+              let ex1 = 0, ey1 = y1, ex2 = W, ey2 = y2
+              if (x1 !== x2) {
+                const m = (y2 - y1) / (x2 - x1)
+                ey1 = y1 + m * (0 - x1)
+                ey2 = y1 + m * (W - x1)
+              }
+              ctx.save()
+              ctx.strokeStyle = '#60a5fa'
+              ctx.lineWidth = 1.5
+              ctx.beginPath(); ctx.moveTo(ex1, ey1); ctx.lineTo(ex2, ey2); ctx.stroke()
+              ctx.fillStyle = '#60a5fa'
+              ctx.beginPath(); ctx.arc(x1, y1, 3, 0, Math.PI * 2); ctx.fill()
+              ctx.beginPath(); ctx.arc(x2, y2, 3, 0, Math.PI * 2); ctx.fill()
+              ctx.restore()
+            })
+          }
+        }
+      }
+    }]
+  }
+}
+
+class PercentPrimitive {
+  constructor(basePrice) { this._base = basePrice; this._s = null }
+  attached({ series }) { this._s = series }
+  detached() { this._s = null }
+  updateAllViews() {}
+  paneViews() {
+    if (!this._s) return []
+    const s = this._s, base = this._base
+    return [{
+      renderer() {
+        return {
+          draw(target) {
+            target.useBitmapCoordinateSpace(({ context: ctx, bitmapSize, horizontalPixelRatio: hr, verticalPixelRatio: vr }) => {
+              const W = bitmapSize.width
+              ctx.save()
+              ctx.font = `bold ${11 * vr}px sans-serif`
+              const yBaseC = s.priceToCoordinate(base)
+              if (yBaseC != null) {
+                const yB = yBaseC * vr
+                ctx.strokeStyle = '#fbbf24'; ctx.lineWidth = 1.5; ctx.setLineDash([])
+                ctx.beginPath(); ctx.moveTo(0, yB); ctx.lineTo(W, yB); ctx.stroke()
+                ctx.fillStyle = '#fbbf24'
+                ctx.fillText('0%', 8 * hr, yB - 4 * vr)
+              }
+              for (const pct of [-10, -5, -2, 2, 5, 10]) {
+                const yC = s.priceToCoordinate(base * (1 + pct / 100))
+                if (yC == null) continue
+                const y = yC * vr
+                const pos = pct > 0
+                ctx.strokeStyle = pos ? 'rgba(38,166,154,0.8)' : 'rgba(239,83,80,0.8)'
+                ctx.lineWidth = 1; ctx.setLineDash([4 * hr, 4 * hr])
+                ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke()
+                ctx.setLineDash([])
+                ctx.fillStyle = pos ? '#26a69a' : '#ef5350'
+                ctx.fillText(`${pct > 0 ? '+' : ''}${pct}%`, 8 * hr, y - 4 * vr)
+              }
+              ctx.restore()
+            })
+          }
+        }
+      }
+    }]
+  }
+}
 
 // ── Tema TradingView ─────────────────────────────────────────────────────────
 
@@ -267,6 +354,12 @@ export default function Analysis() {
   const [stockInfo, setStockInfo]       = useState(null)
   const [stockInfoLoading, setStockInfoLoading] = useState(false)
   const [descExpanded, setDescExpanded] = useState(false)
+
+  const [activeTool, setActiveTool]   = useState('cursor')
+  const [pendingPoint, setPendingPoint] = useState(null)
+  const activeToolRef  = useRef('cursor')
+  const pendingRef     = useRef(null)
+  const drawingsRef    = useRef([])
 
   const priceRef   = useRef(null)
   const adxRef     = useRef(null)
@@ -359,6 +452,34 @@ export default function Analysis() {
     })
     cs.setData(candles)
     candleRef.current = cs
+
+    // Reset drawings on rebuild
+    drawingsRef.current = []
+    pendingRef.current = null
+    setPendingPoint(null)
+
+    pc.subscribeClick(param => {
+      if (!param.time) return
+      const price = cs.coordinateToPrice(param.point.y)
+      if (price == null) return
+      const tool = activeToolRef.current
+      if (tool === 'line') {
+        if (!pendingRef.current) {
+          pendingRef.current = { time: param.time, price }
+          setPendingPoint({ time: param.time, price })
+        } else {
+          const prim = new LinePrimitive(pendingRef.current, { time: param.time, price })
+          cs.attachPrimitive(prim)
+          drawingsRef.current.push(prim)
+          pendingRef.current = null
+          setPendingPoint(null)
+        }
+      } else if (tool === 'percent') {
+        const prim = new PercentPrimitive(price)
+        cs.attachPrimitive(prim)
+        drawingsRef.current.push(prim)
+      }
+    })
 
     // EMA 10 / 55
     pc.addSeries(LineSeries, { color: '#60a5fa', lineWidth: 1.5, title: '', priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false })
@@ -677,6 +798,48 @@ export default function Analysis() {
         </div>
       )}
 
+      {!loading && candles.length > 0 && (
+        <div className="flex items-center gap-2 flex-wrap">
+          {[
+            { id: 'cursor',  label: '↖ Cursor' },
+            { id: 'line',    label: '╱ Línea' },
+            { id: 'percent', label: '% Niveles' },
+          ].map(t => (
+            <button key={t.id}
+              onClick={() => {
+                activeToolRef.current = t.id
+                setActiveTool(t.id)
+                pendingRef.current = null
+                setPendingPoint(null)
+              }}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors
+                ${activeTool === t.id ? 'bg-blue-700 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}>
+              {t.label}
+            </button>
+          ))}
+          <button
+            onClick={() => {
+              for (const prim of drawingsRef.current) {
+                try { candleRef.current?.detachPrimitive(prim) } catch {}
+              }
+              drawingsRef.current = []
+              pendingRef.current = null
+              setPendingPoint(null)
+            }}
+            className="px-3 py-1.5 rounded-lg text-xs font-bold bg-gray-800 text-gray-500 hover:text-red-400 transition-colors">
+            Limpiar
+          </button>
+          {activeTool === 'line' && (
+            <span className="text-xs text-blue-400">
+              {pendingPoint ? '→ click segundo punto' : '→ click primer punto'}
+            </span>
+          )}
+          {activeTool === 'percent' && (
+            <span className="text-xs text-yellow-400">→ click en el precio base</span>
+          )}
+        </div>
+      )}
+
       {!loading && (
         <div className="rounded-xl overflow-hidden border border-gray-800" style={{ background: '#131722' }}>
 
@@ -702,7 +865,8 @@ export default function Analysis() {
             </span>
           </div>
 
-          <div ref={priceRef} className="w-full" />
+          <div ref={priceRef} className="w-full"
+            style={{ cursor: activeTool !== 'cursor' ? 'crosshair' : 'default' }} />
 
           <div className="px-4 pt-2 pb-0 text-xs text-yellow-400 font-bold" style={{ background: '#131722' }}>
             ADX (14) — línea roja = 23
