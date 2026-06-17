@@ -409,16 +409,12 @@ export default function Analysis() {
     fetch(`/api/info?symbol=${stockSymbol.toUpperCase()}`)
       .then(r => r.json())
       .then(data => {
-        const result = data.quoteSummary?.result?.[0]
-        if (!result) return
-        const ap = result.assetProfile ?? {}
-        const fp = result.fundProfile  ?? {}
-        const pr = result.price        ?? {}
+        if (!data.name && !data.sector && !data.desc) return
         setStockInfo({
-          name:     pr.shortName || pr.longName || stockSymbol,
-          sector:   ap.sector   || fp.categoryName || null,
-          industry: ap.industry || null,
-          desc:     ap.longBusinessSummary || null,
+          name:     data.name     || stockSymbol,
+          sector:   data.sector   || null,
+          industry: data.industry || null,
+          desc:     data.desc     || null,
         })
       })
       .catch(() => setStockInfo(null))
