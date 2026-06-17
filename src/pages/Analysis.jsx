@@ -362,7 +362,8 @@ export default function Analysis() {
   const [emaLast, setEmaLast]   = useState({ ema10: null, ema55: null })
   const [ohlcv, setOhlcv]       = useState(null)
   const [timeLeft, setTimeLeft] = useState(null)
-  const [stockInfo, setStockInfo]   = useState(null)
+  const [stockInfo, setStockInfo]       = useState(null)
+  const [stockInfoLoading, setStockInfoLoading] = useState(false)
   const [descExpanded, setDescExpanded] = useState(false)
 
   const priceRef   = useRef(null)
@@ -404,12 +405,13 @@ export default function Analysis() {
   }, [pair, interval, mode, stockSymbol])
 
   useEffect(() => {
-    if (mode !== 'stocks' || !stockSymbol) { setStockInfo(null); return }
+    if (mode !== 'stocks' || !stockSymbol) { setStockInfo(null); setStockInfoLoading(false); return }
+    setStockInfo(null)
     setDescExpanded(false)
+    setStockInfoLoading(true)
     fetch(`/api/info?symbol=${stockSymbol.toUpperCase()}`)
       .then(r => r.json())
       .then(data => {
-        if (!data.name && !data.sector && !data.desc) return
         setStockInfo({
           name:     data.name     || stockSymbol,
           sector:   data.sector   || null,
@@ -417,7 +419,8 @@ export default function Analysis() {
           desc:     data.desc     || null,
         })
       })
-      .catch(() => setStockInfo(null))
+      .catch(() => setStockInfo({ name: stockSymbol, sector: null, industry: null, desc: null }))
+      .finally(() => setStockInfoLoading(false))
   }, [mode, stockSymbol])
 
   const rebuildCharts = useCallback(() => {
@@ -749,31 +752,36 @@ export default function Analysis() {
       </div>
 
       {/* Info empresa / ETF */}
-      {mode === 'stocks' && stockInfo && (
+      {mode === 'stocks' && stockSymbol && (
         <div className="bg-gray-900 border border-gray-800 rounded-xl px-4 py-3 text-sm flex flex-col gap-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-white font-bold">{stockInfo.name}</span>
-            {stockInfo.sector && (
-              <span className="bg-blue-900 text-blue-300 text-xs font-medium px-2 py-0.5 rounded-full">
-                {stockInfo.sector}
-              </span>
-            )}
-            {stockInfo.industry && (
-              <span className="text-gray-500 text-xs">{stockInfo.industry}</span>
-            )}
-          </div>
-          {stockInfo.desc && (
-            <p className="text-gray-400 text-xs leading-relaxed">
-              {descExpanded ? stockInfo.desc : stockInfo.desc.slice(0, 200) + (stockInfo.desc.length > 200 ? '…' : '')}
-              {stockInfo.desc.length > 200 && (
-                <button
-                  onClick={() => setDescExpanded(v => !v)}
-                  className="ml-1.5 text-blue-400 hover:text-blue-300 transition-colors font-medium">
-                  {descExpanded ? 'ver menos' : 'ver más'}
-                </button>
-              )}
-            </p>
-          )}
+          {stockInfoLoading
+            ? <span className="text-gray-500 text-xs">Cargando info...</span>
+            : stockInfo && <>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-white font-bold">{stockInfo.name}</span>
+                  {stockInfo.sector && (
+                    <span className="bg-blue-900 text-blue-300 text-xs font-medium px-2 py-0.5 rounded-full">
+                      {stockInfo.sector}
+                    </span>
+                  )}
+                  {stockInfo.industry && (
+                    <span className="text-gray-500 text-xs">{stockInfo.industry}</span>
+                  )}
+                </div>
+                {stockInfo.desc && (
+                  <p className="text-gray-400 text-xs leading-relaxed">
+                    {descExpanded ? stockInfo.desc : stockInfo.desc.slice(0, 200) + (stockInfo.desc.length > 200 ? '…' : '')}
+                    {stockInfo.desc.length > 200 && (
+                      <button
+                        onClick={() => setDescExpanded(v => !v)}
+                        className="ml-1.5 text-blue-400 hover:text-blue-300 transition-colors font-medium">
+                        {descExpanded ? 'ver menos' : 'ver más'}
+                      </button>
+                    )}
+                  </p>
+                )}
+              </>
+          }
         </div>
       )}
 
