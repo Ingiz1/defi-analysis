@@ -216,6 +216,74 @@ function calcSqueeze(candles, bbLen = 20, bbMult = 2.0, kcLen = 20, kcMult = 1.5
   return { momentum, sqzOn, sqzOff }
 }
 
+// ── Volume Profile ───────────────────────────────────────────────────────────
+
+function calcVolumeProfile(candles, numBuckets = 120) {
+  const maxP = Math.max(...candles.map(c => c.high))
+  const minP = Math.min(...candles.map(c => c.low))
+  const bucketSize = (maxP - minP) / numBuckets
+  const buckets = new Array(numBuckets).fill(0)
+  for (const c of candles) {
+    const range = c.high - c.low || 0.0001
+    const volPerPrice = c.volume / range
+    const lo = Math.max(0, Math.floor((c.low  - minP) / bucketSize))
+    const hi = Math.min(numBuckets - 1, Math.floor((c.high - minP) / bucketSize))
+    for (let b = lo; b <= hi; b++) buckets[b] += volPerPrice * bucketSize
+  }
+  const maxVol = Math.max(...buckets)
+  const pocIdx = buckets.indexOf(maxVol)
+  const pocPrice = minP + (pocIdx + 0.5) * bucketSize
+  const totalVol = buckets.reduce((a, b) => a + b, 0)
+  let lo = pocIdx, hi = pocIdx, acc = buckets[pocIdx]
+  while (acc < totalVol * 0.7) {
+    const expL = lo > 0 ? buckets[lo - 1] : 0
+    const expH = hi < numBuckets - 1 ? buckets[hi + 1] : 0
+    if (expL >= expH && lo > 0) { lo--; acc += buckets[lo] }
+    else if (hi < numBuckets - 1) { hi++; acc += buckets[hi] }
+    else break
+  }
+  return { buckets, bucketSize, minPrice: minP, maxVol, pocPrice,
+    vahPrice: minP + (hi + 1) * bucketSize,
+    valPrice: minP + lo * bucketSize }
+}
+
+class VPPrimitive {
+  constructor(profile) { this._p = profile; this._s = null }
+  attached({ series }) { this._s = series }
+  detached()           { this._s = null  }
+  updateAllViews()     {}
+  paneViews() {
+    if (!this._s) return []
+    const s = this._s, { buckets, bucketSize, minPrice, maxVol, pocPrice, vahPrice, valPrice } = this._p
+    return [{
+      renderer() {
+        return {
+          draw(target) {
+            target.useBitmapCoordinateSpace(({ context: ctx, bitmapSize, verticalPixelRatio: vr }) => {
+              const maxBarW = bitmapSize.width * 0.14
+              for (let i = 0; i < buckets.length; i++) {
+                const y1c = s.priceToCoordinate(minPrice + (i + 1) * bucketSize)
+                const y2c = s.priceToCoordinate(minPrice + i * bucketSize)
+                if (y1c == null || y2c == null) continue
+                const y1 = y1c * vr, y2 = y2c * vr
+                const priceMid = minPrice + (i + 0.5) * bucketSize
+                const barW = (buckets[i] / maxVol) * maxBarW
+                const barH = Math.max(1, Math.abs(y2 - y1))
+                const isPOC = Math.abs(priceMid - pocPrice) < bucketSize
+                const isVA  = priceMid >= valPrice && priceMid <= vahPrice
+                ctx.fillStyle = isPOC ? 'rgba(251,191,36,0.9)'
+                              : isVA  ? 'rgba(96,165,250,0.5)'
+                              :          'rgba(96,165,250,0.22)'
+                ctx.fillRect(bitmapSize.width - barW, Math.min(y1, y2), barW, barH)
+              }
+            })
+          }
+        }
+      }
+    }]
+  }
+}
+
 // ── Drawing Primitives ───────────────────────────────────────────────────────
 
 class LinePrimitive {
@@ -430,6 +498,7 @@ export default function Analysis() {
     const ema55  = calcEMA(closes, 55)
     const adx    = calcADX(candles)
     const { momentum, sqzOn, sqzOff } = calcSqueeze(candles)
+    const vp      = calcVolumeProfile(candles)
     const lastAdx = [...adx].reverse().find(v => v !== null)
     setAdxValue(lastAdx ? lastAdx.toFixed(1) : null)
     setSqzState(sqzOn[sqzOn.length - 1] ? 'on' : sqzOff[sqzOff.length - 1] ? 'off' : 'none')
@@ -499,6 +568,10 @@ export default function Analysis() {
       value: c.volume,
       color: c.close >= c.open ? 'rgba(38,166,154,0.4)' : 'rgba(239,83,80,0.4)',
     })))
+
+    // Volume Profile
+    cs.attachPrimitive(new VPPrimitive(vp))
+    cs.createPriceLine({ price: vp.pocPrice, color: '#fbbf24', lineWidth: 1, lineStyle: 0, axisLabelVisible: true, title: 'POC' })
 
     pc.timeScale().fitContent()
 
