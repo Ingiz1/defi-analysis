@@ -428,14 +428,17 @@ export default function Analysis() {
   const activeToolRef  = useRef('cursor')
   const pendingRef     = useRef(null)
   const drawingsRef    = useRef([])
+  const [isLive, setIsLive] = useState(false)
 
-  const priceRef   = useRef(null)
-  const adxRef     = useRef(null)
-  const sqzRef     = useRef(null)
-  const priceChart = useRef(null)
-  const adxChart   = useRef(null)
-  const sqzChart   = useRef(null)
-  const candleRef  = useRef(null)
+  const priceRef    = useRef(null)
+  const adxRef      = useRef(null)
+  const sqzRef      = useRef(null)
+  const priceChart  = useRef(null)
+  const adxChart    = useRef(null)
+  const sqzChart    = useRef(null)
+  const candleRef   = useRef(null)
+  const volSeriesRef = useRef(null)
+  const wsRef        = useRef(null)
 
   useEffect(() => {
     localStorage.setItem('stockFavorites', JSON.stringify(stockFavorites))
@@ -568,6 +571,7 @@ export default function Analysis() {
       value: c.volume,
       color: c.close >= c.open ? 'rgba(38,166,154,0.4)' : 'rgba(239,83,80,0.4)',
     })))
+    volSeriesRef.current = volS
 
     // Volume Profile
     cs.attachPrimitive(new VPPrimitive(vp))
@@ -657,6 +661,48 @@ export default function Analysis() {
   }, [candles])
 
   useEffect(rebuildCharts, [candles])
+
+  useEffect(() => {
+    if (!candles.length) return
+    if (wsRef.current) { wsRef.current.close(); wsRef.current = null }
+    setIsLive(false)
+
+    const updateBar = (bar) => {
+      candleRef.current?.update(bar)
+      volSeriesRef.current?.update({
+        time: bar.time, value: bar.volume,
+        color: bar.close >= bar.open ? 'rgba(38,166,154,0.4)' : 'rgba(239,83,80,0.4)',
+      })
+    }
+
+    if (mode === 'crypto') {
+      const sym = SYMBOLS[pair].toLowerCase()
+      const iv  = INTERVALS[interval].binance
+      const ws  = new WebSocket(`wss://stream.binance.com:9443/ws/${sym}@kline_${iv}`)
+      wsRef.current = ws
+      ws.onopen    = () => setIsLive(true)
+      ws.onclose   = () => setIsLive(false)
+      ws.onerror   = () => setIsLive(false)
+      ws.onmessage = (e) => {
+        const { k } = JSON.parse(e.data)
+        updateBar({ time: Math.floor(k.t / 1000), open: +k.o, high: +k.h, low: +k.l, close: +k.c, volume: +k.v })
+      }
+      return () => { ws.close(); wsRef.current = null; setIsLive(false) }
+    }
+
+    if (mode === 'stocks' && stockSymbol) {
+      setIsLive(true)
+      const poll = async () => {
+        try {
+          const data = await fetchCandlesStock(stockSymbol, interval)
+          const last = data[data.length - 1]
+          if (last) updateBar(last)
+        } catch {}
+      }
+      const timer = setInterval(poll, 30000)
+      return () => { clearInterval(timer); setIsLive(false) }
+    }
+  }, [candles, mode, pair, interval, stockSymbol])
 
   const isLateral = adxValue !== null && parseFloat(adxValue) < 23
   const sqzLabel  = sqzState === 'on'  ? { text: 'COMPRIMIDO', cls: 'text-yellow-400' }
@@ -919,6 +965,12 @@ export default function Analysis() {
           {/* Leyenda precio */}
           <div className="flex gap-5 px-4 pt-3 pb-1 text-xs text-gray-500 flex-wrap items-center">
             <span className="text-gray-400 font-bold">{mode === 'crypto' ? pair : stockSymbol}</span>
+            {isLive && (
+              <span className="flex items-center gap-1 text-green-400 font-bold">
+                <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse inline-block" />
+                EN VIVO
+              </span>
+            )}
             <span className="flex items-center gap-1.5"><span className="w-3 h-0.5 bg-blue-400 inline-block" />EMA 10</span>
             <span className="flex items-center gap-1.5"><span className="w-3 h-0.5 bg-purple-400 inline-block" />EMA 55</span>
             <span className="ml-auto flex items-center gap-4 font-mono text-xs">
