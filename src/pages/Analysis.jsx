@@ -722,8 +722,8 @@ export default function Analysis() {
           if (last) updateBar(last)
         } catch {}
       }
-      const timer = setInterval(poll, 30000)
-      return () => { clearInterval(timer); setIsLive(false) }
+      const timer = window.setInterval(poll, 30000)
+      return () => { window.clearInterval(timer); setIsLive(false) }
     }
   }, [candles, mode, pair, interval, stockSymbol])
 
