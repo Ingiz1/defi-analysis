@@ -3,4 +3,12 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
+  server: {
+    proxy: {
+      '/api': {
+        target: 'https://defi-analysis.vercel.app',
+        changeOrigin: true,
+      },
+    },
+  },
 })

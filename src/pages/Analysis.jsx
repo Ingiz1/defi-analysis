@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   createChart, CandlestickSeries, LineSeries, HistogramSeries,
 } from 'lightweight-charts'
@@ -40,6 +40,7 @@ async function fetchCandles(pair, interval) {
   const { binance, limit } = INTERVALS[interval]
   const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${binance}&limit=${limit}`)
   const raw = await res.json()
+  if (!Array.isArray(raw)) throw new Error(raw?.msg ?? 'Respuesta inválida de Binance')
   return raw.map(c => ({
     time:   Math.floor(c[0] / 1000),
     open:   parseFloat(c[1]),
@@ -489,7 +490,7 @@ export default function Analysis() {
       .finally(() => setStockInfoLoading(false))
   }, [mode, stockSymbol])
 
-  const rebuildCharts = useCallback(() => {
+  const rebuildCharts = () => {
     if (!candles.length || !priceRef.current || !adxRef.current || !sqzRef.current) return
 
     if (priceChart.current) { priceChart.current.remove(); priceChart.current = null }
@@ -611,7 +612,7 @@ export default function Analysis() {
     // Expande el rightOffset dinámicamente cuando el usuario scrollea al límite derecho
     const lastTime = candles[candles.length - 1].time
     let currentRightOffset = 12
-    priceRef.current.addEventListener('wheel', e => {
+    const wheelHandler = e => {
       if (e.deltaX <= 0) return
       const range = pc.timeScale().getVisibleRange()
       if (!range) return
@@ -621,7 +622,8 @@ export default function Analysis() {
         currentRightOffset += 8
         pc.applyOptions({ timeScale: { rightOffset: currentRightOffset } })
       }
-    }, { passive: true })
+    }
+    priceRef.current.addEventListener('wheel', wheelHandler, { passive: true })
 
     // Sync por timestamp real (no por índice lógico) para que los warmups no desalineen
     let syncing = false
@@ -651,14 +653,17 @@ export default function Analysis() {
       if (sqzRef.current)   sc.applyOptions({ width: sqzRef.current.clientWidth })
     })
     obs.observe(priceRef.current)
+    obs.observe(adxRef.current)
+    obs.observe(sqzRef.current)
 
     return () => {
+      priceRef.current?.removeEventListener('wheel', wheelHandler)
       obs.disconnect()
       if (priceChart.current) { priceChart.current.remove(); priceChart.current = null }
       if (adxChart.current)   { adxChart.current.remove();   adxChart.current   = null }
       if (sqzChart.current)   { sqzChart.current.remove();   sqzChart.current   = null }
     }
-  }, [candles])
+  }
 
   useEffect(rebuildCharts, [candles])
 
