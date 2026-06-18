@@ -95,7 +95,14 @@ async function fetchCandlesStock(symbol, interval) {
       close:  q.close[i],
       volume: q.volume[i] ?? 0,
     }))
-    .filter(c => c.open != null && c.close != null)
+    .filter(c =>
+      c.open != null && c.close != null &&
+      c.high != null && c.low  != null &&
+      isFinite(c.open) && isFinite(c.close) &&
+      isFinite(c.high) && isFinite(c.low)
+    )
+    .sort((a, b) => a.time - b.time)
+    .filter((c, i, arr) => i === 0 || c.time !== arr[i - 1].time)
   return aggregate ? aggregateToNHours(candles, aggregate) : candles
 }
 
@@ -423,6 +430,7 @@ export default function Analysis() {
   const [stockInfo, setStockInfo]       = useState(null)
   const [stockInfoLoading, setStockInfoLoading] = useState(false)
   const [descExpanded, setDescExpanded] = useState(false)
+  const [chartError, setChartError]     = useState(null)
 
   const [activeTool, setActiveTool]   = useState('cursor')
   const [pendingPoint, setPendingPoint] = useState(null)
@@ -493,9 +501,12 @@ export default function Analysis() {
   const rebuildCharts = () => {
     if (!candles.length || !priceRef.current || !adxRef.current || !sqzRef.current) return
 
+    setChartError(null)
     if (priceChart.current) { priceChart.current.remove(); priceChart.current = null }
     if (adxChart.current)   { adxChart.current.remove();   adxChart.current   = null }
     if (sqzChart.current)   { sqzChart.current.remove();   sqzChart.current   = null }
+
+    try {
 
     const closes = candles.map(c => c.close)
     const ema10  = calcEMA(closes, 10)
@@ -659,6 +670,13 @@ export default function Analysis() {
     return () => {
       priceRef.current?.removeEventListener('wheel', wheelHandler)
       obs.disconnect()
+      if (priceChart.current) { priceChart.current.remove(); priceChart.current = null }
+      if (adxChart.current)   { adxChart.current.remove();   adxChart.current   = null }
+      if (sqzChart.current)   { sqzChart.current.remove();   sqzChart.current   = null }
+    }
+
+    } catch (err) {
+      setChartError(err?.message ?? 'Error al renderizar el gráfico')
       if (priceChart.current) { priceChart.current.remove(); priceChart.current = null }
       if (adxChart.current)   { adxChart.current.remove();   adxChart.current   = null }
       if (sqzChart.current)   { sqzChart.current.remove();   sqzChart.current   = null }
@@ -919,6 +937,12 @@ export default function Analysis() {
       {loading && (
         <div className="h-64 flex items-center justify-center text-gray-500 text-sm">
           {mode === 'crypto' ? 'Cargando datos de Binance...' : `Cargando ${stockSymbol}...`}
+        </div>
+      )}
+
+      {!loading && chartError && (
+        <div className="bg-red-950 border border-red-700 rounded-xl px-4 py-3 text-sm text-red-300">
+          <span className="font-bold">Error al cargar el gráfico:</span> {chartError}
         </div>
       )}
 
