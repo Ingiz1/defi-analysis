@@ -6,7 +6,7 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': {
-        target: 'https://defi-analysis.vercel.app',
+        target: 'https://defi-analysis-two.vercel.app',
         changeOrigin: true,
       },
     },
