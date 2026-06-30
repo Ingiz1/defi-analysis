@@ -224,6 +224,57 @@ function calcSqueeze(candles, bbLen = 20, bbMult = 2.0, kcLen = 20, kcMult = 1.5
   return { momentum, sqzOn, sqzOff }
 }
 
+function calcMACD(closes, fast = 12, slow = 26, signal = 9) {
+  const emaFast = calcEMA(closes, fast)
+  const emaSlow = calcEMA(closes, slow)
+  const macd = closes.map((_, i) =>
+    emaFast[i] !== null && emaSlow[i] !== null ? emaFast[i] - emaSlow[i] : null
+  )
+  const sigLine = new Array(closes.length).fill(null)
+  const firstIdx = macd.findIndex(v => v !== null)
+  if (firstIdx < 0) return { macd, signal: sigLine, histogram: sigLine }
+  const startIdx = firstIdx + signal - 1
+  if (startIdx >= closes.length) return { macd, signal: sigLine, histogram: sigLine }
+  let sum = 0
+  for (let i = firstIdx; i <= startIdx; i++) sum += macd[i]
+  sigLine[startIdx] = sum / signal
+  const k = 2 / (signal + 1)
+  for (let i = startIdx + 1; i < closes.length; i++)
+    sigLine[i] = macd[i] * k + sigLine[i - 1] * (1 - k)
+  const histogram = closes.map((_, i) =>
+    macd[i] !== null && sigLine[i] !== null ? macd[i] - sigLine[i] : null
+  )
+  return { macd, signal: sigLine, histogram }
+}
+
+function calcRelativeStrength(assetCandles, spxCandles, period = 20) {
+  if (!spxCandles.length) return new Array(assetCandles.length).fill(null)
+  const byTs = new Map(spxCandles.map(c => [c.time, c.close]))
+  const byDate = {}
+  for (const c of spxCandles) {
+    const d = new Date(c.time * 1000)
+    const key = `${d.getUTCFullYear()}-${d.getUTCMonth()}-${d.getUTCDate()}`
+    if (!byDate[key]) byDate[key] = c.close
+  }
+  const spxAligned = assetCandles.map(c => {
+    if (byTs.has(c.time)) return byTs.get(c.time)
+    const d = new Date(c.time * 1000)
+    return byDate[`${d.getUTCFullYear()}-${d.getUTCMonth()}-${d.getUTCDate()}`] ?? null
+  })
+  const rs = new Array(assetCandles.length).fill(null)
+  for (let i = period; i < assetCandles.length; i++) {
+    const sc = spxAligned[i], sp = spxAligned[i - period]
+    if (!sc || !sp) continue
+    const assetRet = (assetCandles[i].close / assetCandles[i - period].close - 1) * 100
+    const spxRet   = (sc / sp - 1) * 100
+    rs[i] = assetRet - spxRet
+  }
+  const valid = rs.filter(v => v !== null)
+  if (!valid.length) return rs
+  const maxAbs = Math.max(...valid.map(Math.abs))
+  return maxAbs ? rs.map(v => v === null ? null : (v / maxAbs) * 100) : rs
+}
+
 // ── Volume Profile ───────────────────────────────────────────────────────────
 
 function calcVolumeProfile(candles, numBuckets = 120) {
@@ -438,13 +489,18 @@ export default function Analysis() {
   const pendingRef     = useRef(null)
   const drawingsRef    = useRef([])
   const [isLive, setIsLive] = useState(false)
+  const [spxCandles, setSpxCandles] = useState([])
 
   const priceRef    = useRef(null)
   const adxRef      = useRef(null)
   const sqzRef      = useRef(null)
+  const macdRef     = useRef(null)
+  const rsRef       = useRef(null)
   const priceChart  = useRef(null)
   const adxChart    = useRef(null)
   const sqzChart    = useRef(null)
+  const macdChart   = useRef(null)
+  const rsChart     = useRef(null)
   const candleRef   = useRef(null)
   const volSeriesRef = useRef(null)
   const wsRef        = useRef(null)
@@ -480,6 +536,12 @@ export default function Analysis() {
   }, [pair, interval, mode, stockSymbol])
 
   useEffect(() => {
+    fetchCandlesStock('^GSPC', interval)
+      .then(setSpxCandles)
+      .catch(() => setSpxCandles([]))
+  }, [interval])
+
+  useEffect(() => {
     if (mode !== 'stocks' || !stockSymbol) { setStockInfo(null); setStockInfoLoading(false); return }
     setStockInfo(null)
     setDescExpanded(false)
@@ -505,6 +567,8 @@ export default function Analysis() {
     if (priceChart.current) { priceChart.current.remove(); priceChart.current = null }
     if (adxChart.current)   { adxChart.current.remove();   adxChart.current   = null }
     if (sqzChart.current)   { sqzChart.current.remove();   sqzChart.current   = null }
+    if (macdChart.current)  { macdChart.current.remove();  macdChart.current  = null }
+    if (rsChart.current)    { rsChart.current.remove();    rsChart.current    = null }
 
     try {
 
@@ -608,9 +672,9 @@ export default function Analysis() {
     adxS.setData(candles.map((c, i) => adx[i] !== null ? { time: c.time, value: adx[i] } : null).filter(Boolean))
     adxS.createPriceLine({ price: 23, color: 'rgba(239,68,68,0.5)', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: '' })
     // ── Squeeze ───────────────────────────────────────────────────────────────
-    const sc = createChart(sqzRef.current, { ...TV_THEME, height: 140, width: sqzRef.current.clientWidth,
+    const sc = createChart(sqzRef.current, { ...TV_THEME_NO_TIME, height: 140, width: sqzRef.current.clientWidth,
       handleScroll: false, handleScale: false,
-      timeScale: { ...TV_THEME.timeScale, rightOffset: 10, fixRightEdge: false, fixLeftEdge: false } })
+      timeScale: SUB_TIMESCALE })
     sqzChart.current = sc
     const sqzS = sc.addSeries(HistogramSeries, { priceLineVisible: false, lastValueVisible: false })
     sqzS.setData(candles.map((c, i) => {
@@ -619,6 +683,38 @@ export default function Analysis() {
       const color = v >= 0 ? (v >= prev ? '#26a69a' : '#80cbc4') : (v <= prev ? '#ef5350' : '#ffcdd2')
       return { time: c.time, value: v, color }
     }).filter(Boolean))
+
+    // ── MACD ─────────────────────────────────────────────────────────────────
+    const { macd: macdLine, signal: macdSig, histogram: macdHist } = calcMACD(closes)
+    const mc = createChart(macdRef.current, { ...TV_THEME_NO_TIME, height: 140, width: macdRef.current.clientWidth,
+      handleScroll: false, handleScale: false,
+      timeScale: SUB_TIMESCALE })
+    macdChart.current = mc
+    const macdHistS = mc.addSeries(HistogramSeries, { priceLineVisible: false, lastValueVisible: false })
+    macdHistS.setData(candles.map((c, i) => {
+      if (macdHist[i] === null) return null
+      const v = macdHist[i], prev = macdHist[i - 1] ?? v
+      const color = v >= 0 ? (v >= prev ? '#26a69a' : '#80cbc4') : (v <= prev ? '#ef5350' : '#ffcdd2')
+      return { time: c.time, value: v, color }
+    }).filter(Boolean))
+    macdHistS.createPriceLine({ price: 0, color: 'rgba(255,255,255,0.15)', lineWidth: 1, lineStyle: 0, axisLabelVisible: false })
+    mc.addSeries(LineSeries, { color: '#60a5fa', lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false })
+      .setData(candles.map((c, i) => macdLine[i] !== null ? { time: c.time, value: macdLine[i] } : null).filter(Boolean))
+    mc.addSeries(LineSeries, { color: '#fb923c', lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false })
+      .setData(candles.map((c, i) => macdSig[i] !== null ? { time: c.time, value: macdSig[i] } : null).filter(Boolean))
+
+    // ── RS vs SPX ─────────────────────────────────────────────────────────────
+    const rsData = calcRelativeStrength(candles, spxCandles)
+    const rc = createChart(rsRef.current, { ...TV_THEME, height: 140, width: rsRef.current.clientWidth,
+      handleScroll: false, handleScale: false,
+      timeScale: { ...TV_THEME.timeScale, rightOffset: 10, fixRightEdge: false, fixLeftEdge: false } })
+    rsChart.current = rc
+    const rsS = rc.addSeries(HistogramSeries, { priceLineVisible: false, lastValueVisible: false })
+    rsS.setData(candles.map((c, i) => {
+      if (rsData[i] === null) return null
+      return { time: c.time, value: rsData[i], color: rsData[i] >= 0 ? 'rgba(38,166,154,0.8)' : 'rgba(239,83,80,0.8)' }
+    }).filter(Boolean))
+    rsS.createPriceLine({ price: 0, color: 'rgba(255,255,255,0.15)', lineWidth: 1, lineStyle: 0, axisLabelVisible: false })
 
     // Expande el rightOffset dinámicamente cuando el usuario scrollea al límite derecho
     const lastTime = candles[candles.length - 1].time
@@ -638,7 +734,7 @@ export default function Analysis() {
 
     // Sync por timestamp real (no por índice lógico) para que los warmups no desalineen
     let syncing = false
-    const charts = [pc, ac, sc]
+    const charts = [pc, ac, sc, mc, rc]
     charts.forEach(src => {
       src.timeScale().subscribeVisibleTimeRangeChange(r => {
         if (syncing || !r) return
@@ -662,10 +758,14 @@ export default function Analysis() {
       if (priceRef.current) pc.applyOptions({ width: priceRef.current.clientWidth })
       if (adxRef.current)   ac.applyOptions({ width: adxRef.current.clientWidth })
       if (sqzRef.current)   sc.applyOptions({ width: sqzRef.current.clientWidth })
+      if (macdRef.current)  mc.applyOptions({ width: macdRef.current.clientWidth })
+      if (rsRef.current)    rc.applyOptions({ width: rsRef.current.clientWidth })
     })
     obs.observe(priceRef.current)
     obs.observe(adxRef.current)
     obs.observe(sqzRef.current)
+    obs.observe(macdRef.current)
+    obs.observe(rsRef.current)
 
     return () => {
       priceRef.current?.removeEventListener('wheel', wheelHandler)
@@ -673,6 +773,8 @@ export default function Analysis() {
       if (priceChart.current) { priceChart.current.remove(); priceChart.current = null }
       if (adxChart.current)   { adxChart.current.remove();   adxChart.current   = null }
       if (sqzChart.current)   { sqzChart.current.remove();   sqzChart.current   = null }
+      if (macdChart.current)  { macdChart.current.remove();  macdChart.current  = null }
+      if (rsChart.current)    { rsChart.current.remove();    rsChart.current    = null }
     }
 
     } catch (err) {
@@ -680,10 +782,12 @@ export default function Analysis() {
       if (priceChart.current) { priceChart.current.remove(); priceChart.current = null }
       if (adxChart.current)   { adxChart.current.remove();   adxChart.current   = null }
       if (sqzChart.current)   { sqzChart.current.remove();   sqzChart.current   = null }
+      if (macdChart.current)  { macdChart.current.remove();  macdChart.current  = null }
+      if (rsChart.current)    { rsChart.current.remove();    rsChart.current    = null }
     }
   }
 
-  useEffect(rebuildCharts, [candles])
+  useEffect(rebuildCharts, [candles, spxCandles])
 
   useEffect(() => {
     if (!candles.length) return
@@ -727,7 +831,6 @@ export default function Analysis() {
     }
   }, [candles, mode, pair, interval, stockSymbol])
 
-  const isLateral = adxValue !== null && parseFloat(adxValue) < 23
   const sqzLabel  = sqzState === 'on'  ? { text: 'COMPRIMIDO', cls: 'text-yellow-400' }
                   : sqzState === 'off' ? { text: 'LIBERADO',   cls: 'text-red-400'    }
                   :                      { text: '—',           cls: 'text-gray-500'   }
@@ -839,11 +942,13 @@ export default function Analysis() {
             ADX (14)
             <span className="text-gray-600 group-hover:text-gray-400 transition-colors text-xs">?</span>
           </p>
-          <p className={`text-lg font-bold mt-1 ${isLateral ? 'text-green-400' : 'text-yellow-400'}`}>
+          <p className={`text-lg font-bold mt-1 ${adxValue && parseFloat(adxValue) < 23 ? 'text-green-400' : 'text-yellow-400'}`}>
             {loading ? '...' : adxValue ?? '—'}
           </p>
-          {(isLateral || adxValue) && (
-            <p className="text-xs text-gray-500 mt-0.5">{isLateral ? 'LATERAL ✓' : 'CON TENDENCIA'}</p>
+          {adxValue && (
+            <p className="text-xs text-gray-500 mt-0.5">
+              {parseFloat(adxValue) < 23 ? 'LATERAL' : parseFloat(adxValue) < 50 ? 'TENDENCIA MOD.' : 'TENDENCIA FUERTE'}
+            </p>
           )}
           <div className="absolute top-full left-0 mt-2 w-64 z-50 hidden group-hover:block
             bg-gray-900 border border-gray-700 rounded-xl p-3 shadow-xl text-xs text-gray-300 leading-relaxed">
@@ -852,15 +957,15 @@ export default function Analysis() {
             <div className="flex flex-col gap-2">
               <div className="flex items-start gap-2">
                 <span className="w-2 h-2 rounded-sm bg-green-400 mt-0.5 shrink-0"/>
-                <span><span className="text-green-400 font-bold">ADX &lt; 23</span> — Mercado lateral. Ideal para abrir pool de liquidez en Uniswap v3.</span>
+                <span><span className="text-green-400 font-bold">ADX &lt; 23</span> — Mercado lateral, sin tendencia definida.</span>
               </div>
               <div className="flex items-start gap-2">
                 <span className="w-2 h-2 rounded-sm bg-yellow-400 mt-0.5 shrink-0"/>
-                <span><span className="text-yellow-400 font-bold">23 – 50</span> — Tendencia moderada. Riesgo de IL elevado en pools.</span>
+                <span><span className="text-yellow-400 font-bold">23 – 50</span> — Tendencia moderada en desarrollo.</span>
               </div>
               <div className="flex items-start gap-2">
                 <span className="w-2 h-2 rounded-sm bg-red-400 mt-0.5 shrink-0"/>
-                <span><span className="text-red-400 font-bold">ADX &gt; 50</span> — Tendencia fuerte. No recomendado para LP.</span>
+                <span><span className="text-red-400 font-bold">ADX &gt; 50</span> — Tendencia fuerte y sostenida.</span>
               </div>
             </div>
           </div>
@@ -927,13 +1032,6 @@ export default function Analysis() {
       )}
 
       {/* Alerta lateral */}
-      {isLateral && !loading && (
-        <div className="bg-green-950 border border-green-700 rounded-xl px-4 py-3 text-sm text-green-300">
-          <span className="font-bold">ADX &lt; 23</span> — Mercado en lateral. Momento para evaluar apertura de pool.
-          Verifica S/R y Volume Profile para definir el rango.
-        </div>
-      )}
-
       {loading && (
         <div className="h-64 flex items-center justify-center text-gray-500 text-sm">
           {mode === 'crypto' ? 'Cargando datos de Binance...' : `Cargando ${stockSymbol}...`}
@@ -1052,7 +1150,22 @@ export default function Analysis() {
               </div>
             </div>
           </div>
-          <div ref={sqzRef} className="w-full pb-2" />
+          <div ref={sqzRef} className="w-full" />
+
+          <div className="px-4 pt-2 pb-0 text-xs font-bold" style={{ background: '#131722' }}>
+            <span className="text-blue-400">MACD</span>
+            <span className="text-gray-500"> (12, 26, 9) — </span>
+            <span className="text-blue-400">línea</span>
+            <span className="text-gray-600"> / </span>
+            <span className="text-orange-400">señal</span>
+          </div>
+          <div ref={macdRef} className="w-full" />
+
+          <div className="px-4 pt-2 pb-0 text-xs font-bold" style={{ background: '#131722' }}>
+            <span className="text-gray-400">RS vs S&amp;P 500</span>
+            <span className="text-gray-600"> — rendimiento relativo normalizado (-100 / +100)</span>
+          </div>
+          <div ref={rsRef} className="w-full pb-2" />
         </div>
       )}
     </div>
