@@ -694,13 +694,13 @@ export default function Analysis() {
     macdHistS.setData(candles.map((c, i) => {
       if (macdHist[i] === null) return null
       const v = macdHist[i], prev = macdHist[i - 1] ?? v
-      const color = v >= 0 ? (v >= prev ? '#26a69a' : '#80cbc4') : (v <= prev ? '#ef5350' : '#ffcdd2')
+      const color = v >= 0 ? (v >= prev ? '#26C6DA' : '#80DEEA') : (v <= prev ? '#EF5350' : '#FFCDD2')
       return { time: c.time, value: v, color }
     }).filter(Boolean))
     macdHistS.createPriceLine({ price: 0, color: 'rgba(255,255,255,0.15)', lineWidth: 1, lineStyle: 0, axisLabelVisible: false })
-    mc.addSeries(LineSeries, { color: '#60a5fa', lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false })
+    mc.addSeries(LineSeries, { color: '#FFFFFF', lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false })
       .setData(candles.map((c, i) => macdLine[i] !== null ? { time: c.time, value: macdLine[i] } : null).filter(Boolean))
-    mc.addSeries(LineSeries, { color: '#fb923c', lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false })
+    mc.addSeries(LineSeries, { color: '#FF8A80', lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false })
       .setData(candles.map((c, i) => macdSig[i] !== null ? { time: c.time, value: macdSig[i] } : null).filter(Boolean))
 
     // ── RS vs SPX ─────────────────────────────────────────────────────────────
@@ -712,7 +712,7 @@ export default function Analysis() {
     const rsS = rc.addSeries(HistogramSeries, { priceLineVisible: false, lastValueVisible: false })
     rsS.setData(candles.map((c, i) => {
       if (rsData[i] === null) return null
-      return { time: c.time, value: rsData[i], color: rsData[i] >= 0 ? 'rgba(38,166,154,0.8)' : 'rgba(239,83,80,0.8)' }
+      return { time: c.time, value: rsData[i], color: rsData[i] >= 0 ? '#26C6DA' : '#EF5350' }
     }).filter(Boolean))
     rsS.createPriceLine({ price: 0, color: 'rgba(255,255,255,0.15)', lineWidth: 1, lineStyle: 0, axisLabelVisible: false })
 
